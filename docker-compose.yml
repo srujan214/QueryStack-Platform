@@ -1,0 +1,90 @@
+services:
+  # ============================================
+  # MySQL Database
+  # ============================================
+  mysql:
+    image: mysql:8.0
+    container_name: querystack-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: querystack
+    ports:
+      - "3307:3306"    # Host 3307 → Container 3306 (avoid conflict with local MySQL)
+    volumes:
+      - mysql-data:/var/lib/mysql
+    networks:
+      - querystack-net
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-proot"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+      start_period: 30s
+
+  # ============================================
+  # Spring Boot Backend
+  # ============================================
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: querystack-backend
+    restart: unless-stopped
+    depends_on:
+      mysql:
+        condition: service_healthy
+    environment:
+      # Database
+      SPRING_DATASOURCE_URL: jdbc:mysql://mysql:3306/querystack?allowPublicKeyRetrieval=true&useSSL=false&createDatabaseIfNotExist=true
+      SPRING_DATASOURCE_USERNAME: root
+      SPRING_DATASOURCE_PASSWORD: root
+
+      # JWT (same secret as local)
+      APP_JWT_SECRET: QueryStackSecretKeyForJWTTokenGenerationMustBeAtLeast256BitsLongForHS256Algorithm
+      APP_JWT_EXPIRATION: 86400000
+      APP_JWT_REFRESH_EXPIRATION: 604800000
+
+      # File uploads
+      FILE_UPLOAD_DIR: /app/uploads
+
+      # Java options
+      JAVA_OPTS: "-Xmx512m"
+    ports:
+      - "8080:8080"
+    volumes:
+      - uploads-data:/app/uploads
+    networks:
+      - querystack-net
+
+  # ============================================
+  # React Frontend (served by Nginx)
+  # ============================================
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: querystack-frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "5173:80"
+    networks:
+      - querystack-net
+
+# ============================================
+# Volumes — persist data between restarts
+# ============================================
+volumes:
+  mysql-data:
+    driver: local
+  uploads-data:
+    driver: local
+
+# ============================================
+# Networks
+# ============================================
+networks:
+  querystack-net:
+    driver: bridge
